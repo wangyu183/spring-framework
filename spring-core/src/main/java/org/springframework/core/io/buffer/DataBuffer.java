@@ -1,11 +1,11 @@
 /*
- * Copyright 2002-2018 the original author or authors.
+ * Copyright 2002-2019 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -122,7 +122,9 @@ public interface DataBuffer {
 	 * @return this buffer
 	 * @since 5.1.4
 	 */
-	DataBuffer ensureCapacity(int capacity);
+	default DataBuffer ensureCapacity(int capacity) {
+		return this;
+	}
 
 	/**
 	 * Return the position from which this buffer will read.
@@ -242,32 +244,34 @@ public interface DataBuffer {
 	 * @since 5.1.4
 	 */
 	default DataBuffer write(CharSequence charSequence, Charset charset) {
-		Assert.notNull(charSequence, "'charSequence' must not be null");
-		Assert.notNull(charset, "'charset' must not be null");
-		CharsetEncoder charsetEncoder = charset.newEncoder()
-				.onMalformedInput(CodingErrorAction.REPLACE)
-				.onUnmappableCharacter(CodingErrorAction.REPLACE);
-		CharBuffer inBuffer = CharBuffer.wrap(charSequence);
-		int estimatedSize = (int) (inBuffer.remaining() * charsetEncoder.averageBytesPerChar());
-		ByteBuffer outBuffer = ensureCapacity(estimatedSize)
-				.asByteBuffer(writePosition(), writableByteCount());
-		for (; ; ) {
-			CoderResult cr = inBuffer.hasRemaining() ?
-					charsetEncoder.encode(inBuffer, outBuffer, true) : CoderResult.UNDERFLOW;
-			if (cr.isUnderflow()) {
-				cr = charsetEncoder.flush(outBuffer);
+		Assert.notNull(charSequence, "CharSequence must not be null");
+		Assert.notNull(charset, "Charset must not be null");
+		if (charSequence.length() != 0) {
+			CharsetEncoder charsetEncoder = charset.newEncoder()
+					.onMalformedInput(CodingErrorAction.REPLACE)
+					.onUnmappableCharacter(CodingErrorAction.REPLACE);
+			CharBuffer inBuffer = CharBuffer.wrap(charSequence);
+			int estimatedSize = (int) (inBuffer.remaining() * charsetEncoder.averageBytesPerChar());
+			ByteBuffer outBuffer = ensureCapacity(estimatedSize)
+					.asByteBuffer(writePosition(), writableByteCount());
+			while (true) {
+				CoderResult cr = (inBuffer.hasRemaining() ?
+						charsetEncoder.encode(inBuffer, outBuffer, true) : CoderResult.UNDERFLOW);
+				if (cr.isUnderflow()) {
+					cr = charsetEncoder.flush(outBuffer);
+				}
+				if (cr.isUnderflow()) {
+					break;
+				}
+				if (cr.isOverflow()) {
+					writePosition(writePosition() + outBuffer.position());
+					int maximumSize = (int) (inBuffer.remaining() * charsetEncoder.maxBytesPerChar());
+					ensureCapacity(maximumSize);
+					outBuffer = asByteBuffer(writePosition(), writableByteCount());
+				}
 			}
-			if (cr.isUnderflow()) {
-				break;
-			}
-			if (cr.isOverflow()) {
-				writePosition(outBuffer.position());
-				int maximumSize = (int) (inBuffer.remaining() * charsetEncoder.maxBytesPerChar());
-				ensureCapacity(maximumSize);
-				outBuffer = asByteBuffer(writePosition(), writableByteCount());
-			}
+			writePosition(writePosition() + outBuffer.position());
 		}
-		writePosition(outBuffer.position());
 		return this;
 	}
 
@@ -284,6 +288,23 @@ public interface DataBuffer {
 	 * @return the specified slice of this data buffer
 	 */
 	DataBuffer slice(int index, int length);
+
+	/**
+	 * Create a new {@code DataBuffer} whose contents is a shared, retained subsequence of this
+	 * data buffer's content.  Data between this data buffer and the returned buffer is
+	 * shared; though changes in the returned buffer's position will not be reflected
+	 * in the reading nor writing position of this data buffer.
+	 * <p><strong>Note</strong> that unlike {@link #slice(int, int)}, this method
+	 * <strong>will</strong> call {@link DataBufferUtils#retain(DataBuffer)} (or equivalent) on the
+	 * resulting slice.
+	 * @param index the index at which to start the slice
+	 * @param length the length of the slice
+	 * @return the specified, retained slice of this data buffer
+	 * @since 5.2
+	 */
+	default DataBuffer retainedSlice(int index, int length) {
+		return DataBufferUtils.retain(slice(index, length));
+	}
 
 	/**
 	 * Expose this buffer's bytes as a {@link ByteBuffer}. Data between this
